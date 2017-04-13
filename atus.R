@@ -1,6 +1,7 @@
 library(lazyeval)
 library(dplyr)
 library(readr)
+library(tidyr)
 
 # Export 8 from ATUS
 # "Media consumption activities by sex (2003-2015) w/ replicate weights"
@@ -13,47 +14,49 @@ col.types <- paste0(
 )
 
 # Read ATUS export
-atus <- read_csv("atus_00008.csv", col_types=col.types)
+atus.orig <- read_csv("atus_00008.csv", col_types=col.types)
 
-# Calculate variance based on replicate weights
-ReplicateVariance <- function(table) {
+# Working copy
+atus <- atus.orig
+
+# Recode sex flag
+atus$SEX[atus$SEX == 1] <- "Male"
+atus$SEX[atus$SEX == 2] <- "Female"
+
+atus$SEX <- factor(atus$SEX, levels = c("Male", "Female"))
+
+# Calculate estimated variance using replicate weights
+SDRVariance <- function(data, est.mean, activity.name) {
   result <- data.frame()
+  activity <- data[[activity.name]]
   
-  totals <- table %>%
-    summarise(
-      sample.n = n(),
-      pop.n = sum(WT06) / 365,
-      est.mean = sum(reading * WT06) / sum(WT06)
-    )
-  
-  for (i in c(1:160)) {
-    rwt <- paste0("RWT06_", i)
+  SquaredDeviation <- function(rwt.index) {
+    rwt.name <- paste0("RWT06_", rwt.index)
+    rwt <- data[[rwt.name]]
     
-    rep.formula <- interp("sum(reading * rwt) / sum(rwt)", rwt = as.name(rwt))
+    rwt.est <- sum(activity * rwt) / sum(rwt)
     
-    result <- rbind(
-      result,
-      table %>%
-        summarise_(.dots = setNames(list(rep.formula), c("rep.estimate")))
-    )
+    dev <- (rwt.est - est.mean) ^ 2
+    
+    return(dev)
   }
   
-  variance <- (4 / 160) * sum((result$rep.estimate - totals$est.mean) ^ 2)
+  squared.deviations <- sapply(c(1:160), SquaredDeviation)
   
-  return(
-    data.frame(
-      sample.n = totals$sample.n,
-      pop.n = totals$pop.n,
-      est.mean = totals$est.mean,
-      variance = variance
-    )
-  )
+  variance <- (4 / 160) * sum(squared.deviations)
+  
+  return(variance)
 }
 
 # Average reading time by sex
 atus.reading.sex <- atus %>%
   group_by(YEAR, SEX) %>%
-  do(ReplicateVariance(.)) %>%
+  summarise(
+    sample.n = n(),
+    pop.n = sum(WT06) / 365,
+    est.mean = sum(reading * WT06) / sum(WT06),
+    variance = SDRVariance(., est.mean, "reading")
+  ) %>%
   mutate(
     stdev = sqrt(est.mean),
     se = stdev / sqrt(sample.n),
