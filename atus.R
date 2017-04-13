@@ -5,12 +5,17 @@ library(readr)
 # Export 8 from ATUS
 # "Media consumption activities by sex (2003-2015) w/ replicate weights"
 
-# Read ATUS export
-rw.cols <- paste0(rep("d", 161), collapse = "")
-col.types <- paste0("id", rw.cols, "idddddd")
+# Build column types string including replicate weights
+col.types <- paste0(
+  "id",
+  paste0(rep("d", 161), collapse = ""),
+  "idddddd"
+)
 
+# Read ATUS export
 atus <- read_csv("atus_00008.csv", col_types=col.types)
 
+# Calculate variance based on replicate weights
 ReplicateVariance <- function(table) {
   result <- data.frame()
   
@@ -45,8 +50,9 @@ ReplicateVariance <- function(table) {
   )
 }
 
-test <- atus %>%
-  group_by(YEAR) %>%
+# Average reading time by sex
+atus.reading.sex <- atus %>%
+  group_by(YEAR, SEX) %>%
   do(ReplicateVariance(.)) %>%
   mutate(
     stdev = sqrt(est.mean),
@@ -55,11 +61,4 @@ test <- atus %>%
     ci.upper = est.mean + (se * 1.96)
   )
 
-# Counts and means for reading by sex
-atus.reading.totals <- atus %>%
-  group_by(YEAR) %>%
-  summarise(
-    n = sum(WT06) / 365,
-    mean.mins = sum(reading * WT06) / sum(WT06)
-  )
-
+write_csv(atus.reading.sex, "atus.reading.sex.csv")
